@@ -455,6 +455,13 @@ dialog#waitlistDialog::backdrop {
     line-height: 1.65;
 }
 
+.legal-logo {
+    display: block;
+    height: 40px;
+    width: auto;
+    margin: 0 0 1.5rem;
+}
+
 .legal h1 {
     font-size: clamp(1.9rem, 4.5vw, 2.6rem);
     line-height: 1.1;
