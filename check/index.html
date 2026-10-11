@@ -1,0 +1,557 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex" />
+    <title>Scriblet connection check</title>
+    <link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png" />
+    <!--
+        The network check: a bulletin recipient whose phone cannot open a file link opens this page, which
+        tries each host a bulletin needs, compares the results, says in plain words what is wrong and shows
+        a code to read to support. The report goes to Scriblet.Organizations (src/NetworkCheck.cs), which
+        logs it under that code.
+
+        Everything is inline - no fonts, scripts or styles from anywhere else - so the page itself never
+        depends on a host that a filter might block. ?env=staging checks staging's hosts instead.
+    -->
+    <style>
+        :root {
+            --ink: #0c2d5b;
+            --ink-soft: #4a6285;
+            --teal: #0f9ea9;
+            --bg: #ffffff;
+            --card: #f5f8fb;
+            --line: rgba(12, 45, 91, 0.14);
+            --good: #1c7c3c;
+            --bad: #b3261e;
+            --warn: #9a6200;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --ink: #e3ebf6;
+                --ink-soft: #a5b5cc;
+                --teal: #4cc6cf;
+                --bg: #0e1622;
+                --card: #172233;
+                --line: rgba(227, 235, 246, 0.16);
+                --good: #6fcf8e;
+                --bad: #ff8a80;
+                --warn: #f2bd5c;
+            }
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--ink);
+            font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        }
+
+        main {
+            width: min(560px, calc(100% - 32px));
+            margin: 0 auto;
+            padding: 24px 0 48px;
+        }
+
+        h1 { font-size: 1.4rem; margin: 0 0 4px; }
+        h2 { font-size: 1.15rem; margin: 0 0 8px; }
+        p { margin: 0 0 12px; }
+        .lead { color: var(--ink-soft); }
+
+        .checks {
+            list-style: none;
+            padding: 0;
+            margin: 20px 0;
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            overflow: hidden;
+        }
+
+        .checks li {
+            display: flex;
+            gap: 12px;
+            align-items: flex-start;
+            padding: 12px 14px;
+            border-top: 1px solid var(--line);
+        }
+
+        .checks li:first-child { border-top: 0; }
+        .mark { width: 1.4em; flex: none; text-align: center; font-weight: 700; }
+        .mark.ok { color: var(--good); }
+        .mark.fail { color: var(--bad); }
+        .mark.warn { color: var(--warn); }
+        .what { flex: 1; min-width: 0; }
+        .detail { display: block; color: var(--ink-soft); font-size: 0.875rem; overflow-wrap: anywhere; }
+
+        .verdict {
+            background: var(--card);
+            border-radius: 14px;
+            padding: 16px;
+            margin: 20px 0;
+            border-left: 5px solid var(--teal);
+        }
+
+        .verdict.bad { border-left-color: var(--bad); }
+        .verdict.good { border-left-color: var(--good); }
+        .verdict ol { margin: 8px 0 0; padding-left: 1.3em; }
+        .verdict li { margin-bottom: 6px; }
+
+        .code-box {
+            text-align: center;
+            border: 2px dashed var(--teal);
+            border-radius: 14px;
+            padding: 16px;
+            margin: 20px 0;
+        }
+
+        .code {
+            font: 700 2.2rem/1.2 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+            letter-spacing: 0.08em;
+        }
+
+        button, .button {
+            font: inherit;
+            font-weight: 600;
+            border: 0;
+            border-radius: 999px;
+            padding: 10px 18px;
+            background: var(--teal);
+            color: #ffffff;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        button.secondary { background: transparent; color: var(--teal); border: 1px solid var(--teal); }
+
+        input[type="url"] {
+            width: 100%;
+            font: inherit;
+            padding: 10px 12px;
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            background: var(--bg);
+            color: var(--ink);
+            margin: 8px 0;
+        }
+
+        .fixed-link { overflow-wrap: anywhere; display: block; margin: 8px 0; }
+        .small { font-size: 0.8rem; color: var(--ink-soft); }
+        [hidden] { display: none !important; }
+    </style>
+</head>
+
+<body>
+    <main>
+        <h1>Scriblet connection check</h1>
+        <p class="lead" id="intro">Checking whether this phone can reach everything a Scriblet bulletin needs. This
+            takes about 15 seconds.</p>
+
+        <ul class="checks" id="checks"></ul>
+
+        <section class="verdict" id="verdict" hidden></section>
+
+        <section id="fixer" hidden>
+            <h2>Get a link that works</h2>
+            <p>Copy the bulletin link from your email (press and hold it, then <em>Copy link</em>) and paste it
+                here:</p>
+            <input type="url" id="fixInput" placeholder="https://files.scriblet.io/..." autocomplete="off" />
+            <p id="fixResult" hidden><a class="fixed-link" id="fixLink" href="#"></a>
+                <a class="button" id="fixOpen" href="#">Open bulletin</a></p>
+            <p class="small" id="fixError" hidden>That doesn't look like a Scriblet bulletin link. It should begin
+                with https://files.scriblet.io/</p>
+        </section>
+
+        <section class="code-box" id="codeBox" hidden>
+            <p>Your check code</p>
+            <p class="code" id="code"></p>
+            <p class="small" id="codeNote">Read or text this code to whoever sent you this page.</p>
+            <button type="button" class="secondary" id="copyCode">Copy code</button>
+            <button type="button" class="secondary" id="again">Check again</button>
+        </section>
+
+        <p class="small">This check sends Scriblet a short technical report: your phone and browser type, your
+            internet address and how each test went. Nothing else about you or your phone.</p>
+    </main>
+
+    <script>
+        (function () {
+            'use strict';
+
+            var STAGING = /[?&]env=staging\b/.test(location.search);
+            var HOSTS = STAGING
+                ? { api: 'https://api.staging.scriblet.io', files: 'https://files.staging.scriblet.io', storage: 'https://scriblet-staging.mkc1.digitaloceanspaces.com' }
+                : { api: 'https://api.scriblet.io', files: 'https://files.scriblet.io', storage: 'https://scriblet-production.mkc1.digitaloceanspaces.com' };
+            var FILES_HOST = HOSTS.files.replace('https://', '');
+            var TIMEOUT_MS = 10000;
+            // Faster than this, a failure was an answer - a filter refusing the name - rather than silence.
+            var FAST_FAIL_MS = 2500;
+            var SLOW_KBPS = 40;
+
+            var CHECKS = [
+                { id: 'internet', name: 'Internet connection' },
+                { id: 'api', name: 'Scriblet servers' },
+                { id: 'files', name: 'Bulletin links (' + FILES_HOST + ')' },
+                { id: 'storage', name: 'Bulletin file storage' },
+                { id: 'speed', name: 'Download speed' }
+            ];
+
+            var results = {};
+            var running = false;
+
+            function $(id) { return document.getElementById(id); }
+
+            function newCode() {
+                var alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+                var bytes = new Uint8Array(6);
+                crypto.getRandomValues(bytes);
+                var s = '';
+                for (var i = 0; i < 6; i++) {
+                    s += alphabet[bytes[i] % alphabet.length];
+                    if (i === 2) s += '-';
+                }
+                return s;
+            }
+
+            function newNonce() {
+                if (crypto.randomUUID) return crypto.randomUUID();
+                var bytes = new Uint8Array(16);
+                crypto.getRandomValues(bytes);
+                return Array.prototype.map.call(bytes, function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+            }
+
+            function render() {
+                var list = $('checks');
+                list.innerHTML = '';
+                CHECKS.forEach(function (c) {
+                    var r = results[c.id];
+                    var li = document.createElement('li');
+                    var mark = document.createElement('span');
+                    var what = document.createElement('span');
+                    var detail = document.createElement('span');
+                    mark.className = 'mark';
+                    what.className = 'what';
+                    detail.className = 'detail';
+                    if (!r) { mark.textContent = '…'; detail.textContent = 'Waiting'; }
+                    else if (r.state === 'running') { mark.textContent = '…'; detail.textContent = 'Checking'; }
+                    else if (r.state === 'skipped') { mark.textContent = '–'; detail.textContent = r.detail; }
+                    else {
+                        mark.textContent = r.ok ? (r.warn ? '!' : '✓') : '✗';
+                        mark.className += r.ok ? (r.warn ? ' warn' : ' ok') : ' fail';
+                        detail.textContent = r.detail;
+                    }
+                    what.textContent = c.name;
+                    what.appendChild(detail);
+                    li.appendChild(mark);
+                    li.appendChild(what);
+                    list.appendChild(li);
+                });
+            }
+
+            // One request with a deadline. ok means an answer arrived; with no-cors, any answer at all
+            // (a 403 from storage included), since all that is being asked is whether the host is reachable.
+            function attempt(url, options) {
+                var controller = typeof AbortController === 'function' ? new AbortController() : null;
+                var started = performance.now();
+                var timer = setTimeout(function () { if (controller) controller.abort(); }, TIMEOUT_MS);
+                var init = { cache: 'no-store', credentials: 'omit', redirect: 'follow' };
+                for (var k in options) init[k] = options[k];
+                if (controller) init.signal = controller.signal;
+                return fetch(url, init).then(function (response) {
+                    clearTimeout(timer);
+                    return { ok: true, ms: Math.round(performance.now() - started), response: response };
+                }, function (error) {
+                    clearTimeout(timer);
+                    var ms = Math.round(performance.now() - started);
+                    var timedOut = (error && error.name === 'AbortError') || ms >= TIMEOUT_MS - 50;
+                    return { ok: false, ms: ms, failure: timedOut ? 'timeout' : (ms < FAST_FAIL_MS ? 'refused' : 'failed'), error: String(error && error.message || error) };
+                });
+            }
+
+            function describeFailure(a) {
+                if (a.failure === 'timeout') return 'No answer after ' + Math.round(a.ms / 1000) + ' seconds';
+                if (a.failure === 'refused') return 'Blocked straight away (' + a.ms + ' ms)';
+                return 'Failed after ' + (a.ms / 1000).toFixed(1) + ' seconds';
+            }
+
+            function record(id, a, okDetail) {
+                results[id] = {
+                    state: 'done', ok: a.ok, ms: a.ms, failure: a.failure || null, error: a.error || null,
+                    status: a.response && a.response.type !== 'opaque' ? a.response.status : null,
+                    detail: a.ok ? okDetail : describeFailure(a)
+                };
+                render();
+                return results[id];
+            }
+
+            function probe(id, base, path, nonce) {
+                results[id] = { state: 'running' };
+                render();
+                return attempt(base + path + nonce, { mode: 'cors' }).then(function (a) {
+                    if (!a.ok) return record(id, a);
+                    return a.response.json().then(function (body) {
+                        var r = record(id, a, 'Reached in ' + a.ms + ' ms');
+                        r.status = a.response.status;
+                        r.storage = body && body.storage;
+                        return r;
+                    }, function () {
+                        // An answer, but not ours: something in between replied in our place.
+                        a.ok = false; a.failure = 'intercepted'; a.error = 'HTTP ' + a.response.status + ', not the check\'s answer';
+                        var r = record(id, a);
+                        r.detail = 'Something on this network answered instead of Scriblet';
+                        render();
+                        return r;
+                    });
+                });
+            }
+
+            function publicDns(name) {
+                return attempt('https://dns.google/resolve?type=A&name=' + encodeURIComponent(name), { mode: 'cors' }).then(function (a) {
+                    if (!a.ok) return { ok: false, failure: a.failure };
+                    return a.response.json().then(function (j) {
+                        return { ok: true, answers: (j.Answer || []).map(function (x) { return x.data; }) };
+                    }, function () { return { ok: false, failure: 'unreadable' }; });
+                });
+            }
+
+            function inAppBrowser(ua) {
+                if (/; wv\)/.test(ua)) return 'Android in-app browser';
+                if (/FBAN|FBAV|FB_IAB/.test(ua)) return 'Facebook in-app browser';
+                if (/Instagram/.test(ua)) return 'Instagram in-app browser';
+                if (/GSA\//.test(ua)) return 'Google app browser';
+                return null;
+            }
+
+            function decide(env) {
+                var r = results;
+                var steps;
+                if (!r.internet.ok && !r.api.ok && !r.files.ok) {
+                    return {
+                        key: 'no_internet', tone: 'bad', title: 'This phone isn\'t connected to the internet right now',
+                        text: 'None of the tests could reach the internet, including Google.',
+                        steps: ['Check that Wi-Fi or mobile data is turned on and has signal.', 'Then tap Check again.']
+                    };
+                }
+                if (r.api.ok && !r.files.ok) {
+                    var how = r.files.failure === 'refused' || r.files.failure === 'intercepted'
+                        ? 'It was refused straight away, which is what a content filter does.'
+                        : 'It was silently ignored, which is what some firewalls and filters do.';
+                    return {
+                        key: 'files_blocked', tone: 'bad', fixer: true,
+                        title: 'Something on this phone or network is blocking ' + FILES_HOST,
+                        text: 'Scriblet\'s servers work from here, but the address bulletin links use (' + FILES_HOST + ') does not. ' + how,
+                        steps: [
+                            'Use the box below to turn your bulletin link into one that avoids the blocked address.',
+                            'To fix it for good, open Settings, search for "Private DNS" and set it to Automatic.',
+                            'If you use a VPN, ad blocker, or security app (for example Norton, Bitdefender or Samsung Secure Wi-Fi), pause it and try again.',
+                            'On home Wi-Fi, the router\'s parental controls may be blocking it. Try your bulletin link on mobile data with Wi-Fi turned off.'
+                        ]
+                    };
+                }
+                if (!r.api.ok && !r.files.ok) {
+                    return {
+                        key: 'scriblet_blocked', tone: 'bad', title: 'This network is blocking Scriblet\'s servers',
+                        text: 'Other websites work, but neither of Scriblet\'s addresses can be reached from here. This is usually a VPN, a security app, or the network itself (work, school or public Wi-Fi often filter).',
+                        steps: [
+                            'Turn Wi-Fi off and try your bulletin link on mobile data.',
+                            'If you use a VPN or security app, pause it and try again.',
+                            'If nothing helps, read the code below to whoever sent you this page.'
+                        ]
+                    };
+                }
+                if (r.storage.state === 'done' && !r.storage.ok) {
+                    return {
+                        key: 'storage_blocked', tone: 'bad', title: 'Something is blocking where bulletin files are stored',
+                        text: 'Scriblet\'s links work, but bulletin files (PDFs and pictures) are stored with DigitalOcean (digitaloceanspaces.com), and this phone or network blocks it. Some content filters block that address.',
+                        steps: [
+                            'Open Settings, search for "Private DNS" and set it to Automatic.',
+                            'Pause any VPN, ad blocker, or security app and try again.',
+                            'Try your bulletin link on mobile data with Wi-Fi turned off.',
+                            'Read the code below to whoever sent you this page. Scriblet can fix this on its side.'
+                        ]
+                    };
+                }
+                if (r.speed.ok && r.speed.kbps < SLOW_KBPS) {
+                    return {
+                        key: 'slow', tone: 'warn', title: 'Everything is reachable, but the connection is very slow',
+                        text: 'A bulletin can take a minute or more at ' + r.speed.kbps + ' KB per second, and the phone may give up first.',
+                        steps: ['Move somewhere with better signal, or switch between Wi-Fi and mobile data.', 'Then open your bulletin link again and give it a minute.']
+                    };
+                }
+                if (env.inApp) {
+                    return {
+                        key: 'in_app', tone: 'warn', title: 'Everything works. Try opening the link in Chrome',
+                        text: 'This page opened inside another app (' + env.inApp + '). Those built-in browsers sometimes fail to open bulletin files.',
+                        steps: ['In your email, press and hold the bulletin link and copy it.', 'Open Chrome, paste it into the address bar and go.']
+                    };
+                }
+                return {
+                    key: 'all_clear', tone: 'good', title: 'Everything checks out from here',
+                    text: 'This phone can reach everything a bulletin needs, and quickly.',
+                    steps: [
+                        'Try your bulletin link again. If you tapped it inside an email app, press and hold it, copy it, and open it in Chrome instead.',
+                        'If it still fails, read the code below to whoever sent you this page.'
+                    ]
+                };
+            }
+
+            function showVerdict(v) {
+                var box = $('verdict');
+                box.className = 'verdict ' + (v.tone === 'good' ? 'good' : v.tone === 'bad' ? 'bad' : '');
+                box.innerHTML = '';
+                var h = document.createElement('h2'); h.textContent = v.title; box.appendChild(h);
+                var p = document.createElement('p'); p.textContent = v.text; box.appendChild(p);
+                var ol = document.createElement('ol');
+                v.steps.forEach(function (s) { var li = document.createElement('li'); li.textContent = s; ol.appendChild(li); });
+                box.appendChild(ol);
+                box.hidden = false;
+                $('fixer').hidden = !v.fixer;
+            }
+
+            function environment() {
+                var c = navigator.connection || {};
+                var ua = navigator.userAgent;
+                var android = /Android ([\d.]+)/.exec(ua);
+                return {
+                    userAgent: ua,
+                    android: android ? android[1] : null,
+                    inApp: inAppBrowser(ua),
+                    online: navigator.onLine,
+                    connection: c.type || null,
+                    effectiveType: c.effectiveType || null,
+                    downlinkMbps: typeof c.downlink === 'number' ? c.downlink : null,
+                    rttMs: typeof c.rtt === 'number' ? c.rtt : null,
+                    saveData: !!c.saveData,
+                    language: navigator.language,
+                    timeZone: (Intl.DateTimeFormat().resolvedOptions() || {}).timeZone || null,
+                    screen: screen.width + 'x' + screen.height,
+                    page: location.href
+                };
+            }
+
+            function report(payload) {
+                var body = JSON.stringify(payload);
+                var send = function (base, path) {
+                    return attempt(base + path, { method: 'POST', mode: 'cors', headers: { 'Content-Type': 'application/json' }, body: body })
+                        .then(function (a) { return a.ok && a.response.ok ? a.response.json() : null; })
+                        .catch(function () { return null; });
+                };
+                return send(HOSTS.api, '/api/diag/reports').then(function (reply) {
+                    return reply || send(HOSTS.files, '/_diag/reports');
+                });
+            }
+
+            function run() {
+                if (running) return;
+                running = true;
+                results = {};
+                $('verdict').hidden = true;
+                $('fixer').hidden = true;
+                $('codeBox').hidden = true;
+                $('intro').hidden = false;
+                render();
+
+                var code = newCode();
+                var env = environment();
+                var nonces = { api: newNonce(), files: newNonce() };
+                var dns = {};
+
+                results.internet = { state: 'running' };
+                var internet = attempt('https://www.google.com/generate_204', { mode: 'no-cors' })
+                    .then(function (a) { return record('internet', a, 'Working (' + a.ms + ' ms)'); });
+                var api = probe('api', HOSTS.api, '/api/diag/probe/', nonces.api);
+                var files = probe('files', HOSTS.files, '/_diag/probe/', nonces.files);
+                var lookups = Promise.all([publicDns(FILES_HOST), publicDns(HOSTS.storage.replace('https://', ''))])
+                    .then(function (answers) { dns.files = answers[0]; dns.storage = answers[1]; });
+
+                Promise.all([internet, api, files]).then(function () {
+                    var storage = (results.api && results.api.storage) || (results.files && results.files.storage) || HOSTS.storage;
+                    results.storage = { state: 'running' };
+                    render();
+                    var storageCheck = attempt(storage + '/', { mode: 'no-cors' })
+                        .then(function (a) { var r = record('storage', a, 'Reached in ' + a.ms + ' ms'); r.host = storage; });
+
+                    var speedBase = results.files.ok ? HOSTS.files + '/_diag/payload' : results.api.ok ? HOSTS.api + '/api/diag/payload' : null;
+                    var speedCheck;
+                    if (!speedBase) {
+                        results.speed = { state: 'skipped', detail: 'Skipped: Scriblet couldn\'t be reached' };
+                        render();
+                        speedCheck = Promise.resolve();
+                    } else {
+                        results.speed = { state: 'running' };
+                        render();
+                        var started = performance.now();
+                        speedCheck = attempt(speedBase, { mode: 'cors' }).then(function (a) {
+                            if (!a.ok) return record('speed', a);
+                            return a.response.arrayBuffer().then(function (buffer) {
+                                var ms = Math.max(1, Math.round(performance.now() - started));
+                                var kbps = Math.round(buffer.byteLength / 1024 / (ms / 1000));
+                                var r = record('speed', { ok: true, ms: ms }, kbps + ' KB per second');
+                                r.kbps = kbps;
+                                r.bytes = buffer.byteLength;
+                                if (kbps < SLOW_KBPS) { r.warn = true; render(); }
+                            }, function (e) { record('speed', { ok: false, ms: Math.round(performance.now() - started), failure: 'failed', error: String(e) }); });
+                        });
+                    }
+                    return Promise.all([storageCheck, speedCheck, lookups]);
+                }).then(function () {
+                    var verdict = decide(env);
+                    showVerdict(verdict);
+                    $('intro').hidden = true;
+                    $('code').textContent = code;
+                    $('codeBox').hidden = false;
+                    running = false;
+
+                    var checks = {};
+                    CHECKS.forEach(function (c) {
+                        var r = results[c.id] || {};
+                        checks[c.id] = { state: r.state, ok: r.ok, ms: r.ms, failure: r.failure, error: r.error, status: r.status, kbps: r.kbps, host: r.host };
+                    });
+                    return report({
+                        code: code, verdict: verdict.key, nonces: [nonces.api, nonces.files],
+                        noncesFor: { api: nonces.api, files: nonces.files },
+                        checks: checks, publicDns: dns, environment: env, at: new Date().toISOString()
+                    }).then(function (reply) {
+                        $('codeNote').textContent = reply
+                            ? 'Read or text this code to whoever sent you this page.'
+                            : 'Read or text this code, and what the box above says, to whoever sent you this page. (The report couldn\'t be sent from this network.)';
+                    });
+                });
+            }
+
+            // files.scriblet.io/{slug}/{token} and /{slug}/p/{token} are api.scriblet.io/api/files/... too:
+            // the same route under another name, for a phone whose filter blocks only the files hostname.
+            function fixLink() {
+                var value = $('fixInput').value.trim();
+                var match = /^https?:\/\/files\.(?:staging\.)?scriblet\.io\/([A-Za-z0-9-]+)\/(p\/)?([A-Za-z0-9_.-]+)\/?(?:[?#].*)?$/.exec(value);
+                $('fixResult').hidden = !match;
+                $('fixError').hidden = !!match || value === '';
+                if (!match) return;
+                var fixed = HOSTS.api + '/api/files/' + match[1] + '/' + (match[2] || '') + match[3];
+                $('fixLink').textContent = fixed;
+                $('fixLink').href = fixed;
+                $('fixOpen').href = fixed;
+            }
+
+            $('fixInput').addEventListener('input', fixLink);
+            $('again').addEventListener('click', run);
+            $('copyCode').addEventListener('click', function () {
+                var text = $('code').textContent;
+                if (navigator.clipboard) navigator.clipboard.writeText(text).then(function () { $('copyCode').textContent = 'Copied'; });
+            });
+
+            if (!window.fetch || !window.crypto || !crypto.getRandomValues) {
+                $('intro').textContent = 'This browser is too old to run the check. Please open this page in Chrome.';
+                return;
+            }
+            run();
+        })();
+    </script>
+</body>
+
+</html>
